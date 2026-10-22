@@ -873,7 +873,7 @@ class HyperliquidListener:
         coin = (f.get("coin") or "").lower()
         if not coin or coin in SKIP_SYMBOLS or coin in STABLECOINS: return
         px = safe_float(f.get("px")); sz = safe_float(f.get("sz"))
-        if not px or not sz: return # <--- اینجا اصلاح شد
+        if not px or not sz: return # اصلاح شد
         usd = px * sz
         if usd < CFG.hl_min_usd: return
         tx = f.get("hash") or ""; wallet_l = wallet.lower()
@@ -890,7 +890,11 @@ class SolanaRpcListener:
         self._queue = queue; self._stop = asyncio.Event(); self._seen_tx: Set[str] = set()
         self._client: Optional[httpx.AsyncClient] = None; self._bucket = TokenBucket(2.0, 5)
     async def run(self) -> None:
-        if not self._wallets: log.warning("Solana listener: no wallets"); return
+        if not self._wallets: 
+            log.warning("Solana listener: no wallets. Sleeping for 60s...")
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), timeout=60.0)
+            return
         if not CFG.helius_api_key: log.error("Solana listener requires HELIUS_API_KEY"); return
         self._client = httpx.AsyncClient(timeout=15.0)
         attempt = 0
@@ -1251,7 +1255,7 @@ class Orchestrator:
             asyncio.create_task(supervisor("stats", self._stats_loop, self._stop), name="sup-stats"),
             asyncio.create_task(supervisor("heartbeat", self._heartbeat_loop, self._stop), name="sup-heartbeat"),
             asyncio.create_task(supervisor("save", self._save_loop, self._stop), name="sup-save"),
-            asyncio.create_task(supervisor("telegram-alive", self._telegram_heartbeat_loop, self._stop), name="sup-tg-alive"), # <--- این خط اضافه شد
+            asyncio.create_task(supervisor("telegram-alive", self._telegram_heartbeat_loop, self._stop), name="sup-tg-alive"),
         ]
         log.info("🐋 Quantum Whale Watcher v20.3 (patched)")
         log.info("   Chains        : %s", ", ".join(CFG.chains))
