@@ -873,7 +873,7 @@ class HyperliquidListener:
         coin = (f.get("coin") or "").lower()
         if not coin or coin in SKIP_SYMBOLS or coin in STABLECOINS: return
         px = safe_float(f.get("px")); sz = safe_float(f.get("sz"))
-        if not px or not sz: return # اصلاح شد
+        if not px or not sz: return
         usd = px * sz
         if usd < CFG.hl_min_usd: return
         tx = f.get("hash") or ""; wallet_l = wallet.lower()
@@ -1113,35 +1113,54 @@ class Notifier:
         self._json_path = Path(CFG.json_export_path) if CFG.json_export_path else None
         self._exec_bucket = TokenBucket(1.0, 3)
         self._tg_bucket = TokenBucket(1.0, 5)
+        
     def _format(self, a: Alert) -> str:
-        ev = a.event; usd = f"${ev.usd_value:,.0f}" if ev.usd_value else "?"; price = f"${a.price_usd:.8f}" if a.price_usd else "?"
+        ev = a.event
+        usd = f"${ev.usd_value:,.0f}" if ev.usd_value else "نامشخص"
+        price = f"${a.price_usd:.8f}" if a.price_usd else "نامشخص"
+        
+        # ترجمه پارامترها به فارسی
+        severity_fa = {"CRITICAL": "بحرانی 🔴", "HIGH": "بالا 🟠", "MEDIUM": "متوسط 🟡", "LOW": "پایین 🟢"}.get(a.severity, a.severity)
+        event_type_fa = "خرید 🟢" if ev.event_type == "buy" else "فروش 🔴"
+        
+        chain_fa = {
+            "ethereum": "اتریوم", "solana": "سولانا", "base": "بیس", 
+            "bsc": "بایننس اسمارت چین", "arbitrum": "آربیتروم", "hyperliquid": "هایپرلیکوئید"
+        }.get(ev.chain.lower(), ev.chain.upper())
+
         explorer = CHAIN_REGISTRY.get(ev.chain, CHAIN_REGISTRY["ethereum"]).explorer
+        
         lines = [
-            a.title, f"Severity: {a.severity} ({a.risk_score:.0f}/100)",
-            f"Chain: {ev.chain.upper()} • Type: {ev.event_type.upper()} • Symbol: {ev.token_symbol}",
-            f"Wallet: {ev.wallet}", f"Amount: {usd}", f"Price: {price}",
-            f"Momentum: {a.momentum} whales / ${a.momentum_usd:,.0f}", f"Why: {a.reason}",
+            f"🐋 <b>سیگنال {event_type_fa} - {ev.token_symbol}</b>",
+            f"━━━━━━━━━━━━━━━━",
+            f"⚠️ <b>وضعیت:</b> {severity_fa} ({a.risk_score:.0f}/100)",
+            f"🌐 <b>شبکه:</b> {chain_fa}",
+            f"👤 <b>کیف پول:</b> <a href='{explorer.replace('/tx/', '/address/')}{ev.wallet}'>{short(ev.wallet)}</a>",
+            f"💰 <b>حجم معامله:</b> {usd}",
+            f"💵 <b>قیمت ارز:</b> {price}",
+            f"📊 <b>مومنتوم:</b> {a.momentum} نهنگ / ${a.momentum_usd:,.0f}",
+            f"📝 <b>دلیل:</b> {a.reason}",
         ]
+        
         if a.quantum_state:
-            lines.append("── ⚛️ Quantum ──")
-            lines.append(f"|ψ⟩ = {a.quantum_state}  (conf {a.quantum_confidence:.0%})")
-            lines.append(f"Entangled cluster: {a.entanglement_size} wallets")
-            lines.append(f"Coherence: {a.coherence:.0%}  •  Interference: {a.interference_bonus:+.2f}")
+            lines.append("── ⚛️ تحلیل کوانتوم ──")
+            lines.append(f"وضعیت: {a.quantum_state} (اعتماد: {a.quantum_confidence:.0%})")
+            lines.append(f"خوشه: {a.entanglement_size} کیف پول")
+            
         if a.security:
-            sec = a.security; lines.append("── Security ──")
-            if sec.is_honeypot is not None: lines.append(f"Honeypot: {'🚨 YES' if sec.is_honeypot else '✅ No'} ({sec.honeypot_source})")
-            if sec.sell_tax is not None: lines.append(f"Sell tax: {sec.sell_tax:.1%}" + (f"  •  Buy tax: {sec.buy_tax:.1%}" if sec.buy_tax is not None else ""))
-            if sec.holder_count is not None: lines.append(f"Holders: {sec.holder_count:,}" + (f"  •  Owner: {sec.owner_percent:.1%}" if sec.owner_percent is not None else ""))
-            if sec.top10_holder_percent is not None: lines.append(f"Top-10 concentration: {sec.top10_holder_percent:.1%}")
-            if sec.is_mintable: lines.append("⚠️  Mintable")
-            if sec.hidden_owner: lines.append("⚠️  Hidden owner")
-            if sec.is_proxy: lines.append("⚠️  Proxy contract")
-            if sec.lp_locked_percent is not None: lines.append(f"LP locked: {sec.lp_locked_percent:.1%}")
-        if ev.tx_hash: lines.append(f"TX: {explorer}{ev.tx_hash}")
+            sec = a.security; lines.append("── 🛡️ امنیت قرارداد ──")
+            if sec.is_honeypot is not None: lines.append(f"هانی پات: {'🚨 بله' if sec.is_honeypot else '✅ خیر'}")
+            if sec.sell_tax is not None: lines.append(f"کارمزد فروش: {sec.sell_tax:.1%}")
+            if sec.is_mintable: lines.append("⚠️ قابلیت چاپ (Mintable)")
+            if sec.hidden_owner: lines.append("⚠️ مالک مخفی")
+            
+        if ev.tx_hash: lines.append(f"🔗 <a href='{explorer}{ev.tx_hash}'>مشاهده تراکنش در اکسپلورر</a>")
         if ev.token_address:
             slug = CHAIN_REGISTRY.get(ev.chain, CHAIN_REGISTRY["ethereum"]).dexscreener_slug
-            lines.append(f"Chart: https://dexscreener.com/{slug}/{ev.token_address}")
+            lines.append(f"📈 <a href='https://dexscreener.com/{slug}/{ev.token_address}'>مشاهده چارت در DexScreener</a>")
+            
         return "\n".join(lines)
+
     async def send(self, alert: Alert) -> None:
         text = self._format(alert)
         emoji = "🚨" if alert.severity in ("CRITICAL", "HIGH") else "🔔"
@@ -1170,7 +1189,7 @@ class Notifier:
             await self._tg_bucket.acquire()
             try:
                 async with httpx.AsyncClient() as client:
-                    await client.post(f"https://api.telegram.org/bot{CFG.telegram_token}/sendMessage", json={"chat_id": CFG.telegram_chat, "text": text, "disable_web_page_preview": True}, timeout=10.0)
+                    await client.post(f"https://api.telegram.org/bot{CFG.telegram_token}/sendMessage", json={"chat_id": CFG.telegram_chat, "text": text, "disable_web_page_preview": True, "parse_mode": "HTML"}, timeout=10.0)
             except Exception as e: log.debug("telegram fail: %s", e)
         if CFG.execution_webhook and alert.risk_score >= CFG.execution_min_score and alert.event.event_type == "buy":
             await self._exec_bucket.acquire()
@@ -1420,6 +1439,15 @@ class Orchestrator:
         else:
             threshold = CFG.alert_min_score
         if adjusted < threshold: self._stats["filtered"] += 1; return
+
+        # ==========================================
+        # فیلتر کردن تراکنش‌های اسپم و بی‌ارزش
+        # ==========================================
+        if not ev.usd_value or ev.usd_value < 10000: 
+            self._stats["filtered"] += 1; return
+        if ev.wallet.lower() == "0x000000000000000000000000000000000000dead":
+            self._stats["filtered"] += 1; return
+
         severity = ("CRITICAL" if adjusted >= 80 else "HIGH" if adjusted >= 60 else "MEDIUM" if adjusted >= 45 else "LOW")
         if not self.anti_spam.allow(token_key, severity): return
         if ev.token_address: self.qwalk.learn(token_key, f"{ev.chain}:{ev.token_symbol.upper()}", weight=math.log10(max(ev.usd_value or 1, 1)))
