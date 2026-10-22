@@ -873,7 +873,7 @@ class HyperliquidListener:
         coin = (f.get("coin") or "").lower()
         if not coin or coin in SKIP_SYMBOLS or coin in STABLECOINS: return
         px = safe_float(f.get("px")); sz = safe_float(f.get("sz"))
-        if not px or not sz: continue
+        if not px or not sz: return # <--- اینجا اصلاح شد
         usd = px * sz
         if usd < CFG.hl_min_usd: return
         tx = f.get("hash") or ""; wallet_l = wallet.lower()
@@ -1251,6 +1251,7 @@ class Orchestrator:
             asyncio.create_task(supervisor("stats", self._stats_loop, self._stop), name="sup-stats"),
             asyncio.create_task(supervisor("heartbeat", self._heartbeat_loop, self._stop), name="sup-heartbeat"),
             asyncio.create_task(supervisor("save", self._save_loop, self._stop), name="sup-save"),
+            asyncio.create_task(supervisor("telegram-alive", self._telegram_heartbeat_loop, self._stop), name="sup-tg-alive"), # <--- این خط اضافه شد
         ]
         log.info("🐋 Quantum Whale Watcher v20.3 (patched)")
         log.info("   Chains        : %s", ", ".join(CFG.chains))
@@ -1266,6 +1267,23 @@ class Orchestrator:
                  "ON" if CFG.quantum_enabled else "OFF", CFG.decoherence_halflife, CFG.entanglement_threshold, CFG.qmc_samples)
         log.info("   Rate limit    : %d alerts / %.0fs", CFG.alert_rate_cap, CFG.alert_rate_window)
         await self._stop.wait(); await self._shutdown()
+
+    async def _telegram_heartbeat_loop(self) -> None:
+        await self._sleep(60) # در شروع کار ۱ دقیقه صبر میکنه بعد پیام میده
+        while not self._stop.is_set():
+            if CFG.telegram_token and CFG.telegram_chat:
+                try:
+                    async with httpx.AsyncClient() as client:
+                        await client.post(
+                            f"https://api.telegram.org/bot{CFG.telegram_token}/sendMessage",
+                            json={"chat_id": CFG.telegram_chat, "text": "💚 <b>ربات نهنگ‌ها زنده است!</b>\nدر حال رصد بازار...", "parse_mode": "HTML"},
+                            timeout=10.0
+                        )
+                except Exception as e:
+                    log.warning("Telegram heartbeat failed: %s", e)
+            # هر ۴ ساعت یکبار پیام میده (4 * 60 * 60 ثانیه)
+            await self._sleep(4 * 60 * 60)
+
     async def _warmup(self) -> None:
         assert self.enricher is not None
         trending = [
